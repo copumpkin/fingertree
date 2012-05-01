@@ -4,63 +4,88 @@ import Level
 open import Function
 open import Algebra
 
+open import Data.Empty
 open import Data.Product hiding (map)
+open import Data.Nat hiding (compare)
+open import Data.Nat.Properties
+open import Data.Vec renaming (map to mapVec)
 
+open import Relation.Nullary
+open import Relation.Nullary.Decidable hiding (map)
+open import Relation.Binary
 import Relation.Binary.EqReasoning as EqR
+
+import Relation.Binary.PropositionalEquality as PropEq
+open PropEq using (_≡_)
 
 import MonoidSolver
 
+open StrictTotalOrder strictTotalOrder using (compare)
+open DecTotalOrder decTotalOrder using () renaming (trans to ≤-trans)
+
+-- TODO: get rid of the foldr where foldr₁ (or left) would work
 -- TODO: avoid all the mess that comes from all the cases of Digit and make it inductive
 -- TODO: avoid full monoids and just use semigroups
 
 module Digit where
-  data Digit (A : Set) : Set where
-    one   : (a : A) → Digit A
-    two   : (a b : A) → Digit A
-    three : (a b c : A) → Digit A
-    four  : (a b c d : A) → Digit A
+  record Digit (A : Set) : Set where
+    constructor digit
+    field
+      {n}    : ℕ
+      vec    : Vec A (1 + n)
+      n-good : 1 + n ≤ 4
+
+  one : {A : Set} (a : A) → Digit A
+  one a = digit (a ∷ []) (s≤s z≤n)
+
+  two : {A : Set} (a b : A) → Digit A
+  two a b = digit (a ∷ b ∷ []) (s≤s (s≤s z≤n))
+
+  three : {A : Set} (a b c : A) → Digit A
+  three a b c = digit (a ∷ b ∷ c ∷ []) (s≤s (s≤s (s≤s z≤n)))
+
+  four : {A : Set} (a b c d : A) → Digit A
+  four a b c d = digit (a ∷ b ∷ c ∷ d ∷ []) (s≤s (s≤s (s≤s (s≤s z≤n))))
 
   map : {A B : Set} → (A → B) → Digit A → Digit B
-  map f (one a) = one (f a)
-  map f (two a b) = two (f a) (f b)
-  map f (three a b c) = three (f a) (f b) (f c)
-  map f (four a b c d) = four (f a) (f b) (f c) (f d)
+  map f (digit vec eq) = digit (mapVec f vec) eq
 
   module Measured (M : Monoid Level.zero Level.zero) where
     open Monoid M renaming (Carrier to V)
 
     measure : {A : Set} → (A → V) → Digit A → V
-    measure f (one a) = f a
-    measure f (two a b) = f a ∙ f b
-    measure f (three a b c) = f a ∙ f b ∙ f c
-    measure f (four a b c d) = f a ∙ f b ∙ f c ∙ f d
+    measure f (digit vec eq) = foldr _ _∙_ ε (mapVec f vec)
 
 module Node (M : Monoid Level.zero Level.zero) where
   open Monoid M renaming (Carrier to V)
 
-  private
-    module Dummy where
-      data Node (A : Set) (f : A → V) : Set where
-        node2 : (m : V) (x y : A) .(eq : m ≈ f x ∙ f y) → Node A f
-        node3 : (m : V) (x y z : A) .(eq : m ≈ f x ∙ f y ∙ f z) → Node A f
+  record Node (A : Set) (f : A → V) : Set where
+    constructor node
+    field
+      {n}     : ℕ
+      m       : V
+      vec     : Vec A (2 + n)
+      n-good  : 2 + n ≤ 3
+      .m-good : m ≈ foldr _ _∙_ ε (mapVec f vec)
 
-  open Dummy public using (Node; module Node)
-  
+  node′ : ∀ {n} {A : Set} {f : A → V} (xs : Vec A (2 + n)) {pf : True ((2 + n) ≤? 3)} → Node A f
+  node′ xs {pf} = node _ xs (toWitness pf) refl
+
   node2 : {A : Set} {f : A → V} (x y : A) → Node A f
-  node2 x y = Node.node2 _ x y refl
+  node2 x y = node _ (x ∷ y ∷ []) (s≤s (s≤s z≤n)) refl
 
   node3 : {A : Set} {f : A → V} (x y z : A) → Node A f
-  node3 x y z = Node.node3 _ x y z refl
+  node3 x y z = node _ (x ∷ y ∷ z ∷ []) (s≤s (s≤s (s≤s z≤n))) refl
 
   measure : {A : Set} {f : A → V} → Node A f → V
-  measure (Node.node2 m x y eq) = m
-  measure (Node.node3 m x y z eq) = m
+  measure = Node.m
 
   {-
   fastMap : {A B : Set} {f : A → V} {g : B → V} (h : A → B) → Node A f → Node B g
   fastMap h (Dummy.node2 m x y eq) = Dummy.node2 m (h x) (h y) {!!}
   fastMap h (Dummy.node3 m x y z eq) = Dummy.node3 m (h x) (h y) (h z) {!!}
   -}
+
 
 module MapNode (M1 M2 : Monoid Level.zero Level.zero) where
   private
@@ -70,8 +95,10 @@ module MapNode (M1 M2 : Monoid Level.zero Level.zero) where
     module N2 = Node M2
 
   map : {A B : Set} {f : A → M1.Carrier} {g : B → M2.Carrier} (h : A → B) → N1.Node A f → N2.Node B g
-  map h (N1.Node.node2 m x y eq) = N2.node2 (h x) (h y)
-  map h (N1.Node.node3 m x y z eq) = N2.node3 (h x) (h y) (h z)
+  map h (Node.node m (x ∷ x₁ ∷ []) n-good m-good) = Node.node _ (h x ∷ h x₁ ∷ []) n-good M2.refl
+  map h (Node.node m (x ∷ x₁ ∷ x₂ ∷ []) n-good m-good) = Node.node _ (h x ∷ h x₁ ∷ h x₂ ∷ []) n-good M2.refl
+  map h (Node.node m (x ∷ x₁ ∷ x₂ ∷ x₃ ∷ vec) (s≤s (s≤s (s≤s ()))) m-good)
+
 
 module Main (M : Monoid Level.zero Level.zero) where
   open Monoid M renaming (Carrier to V)
@@ -105,6 +132,7 @@ module Main (M : Monoid Level.zero Level.zero) where
   deep : {A : Set} {f : A → V} (l : Digit A) (t : FingerTree (Node A f) measureNode) (r : Digit A) → FingerTree A f
   deep l t r = Dummy.deep _ l t r refl -- yay, value inference!
 
+
   {-
   open Digit renaming (map to mapDigit)
 
@@ -118,57 +146,36 @@ module Main (M : Monoid Level.zero Level.zero) where
 
   open MonoidSolver M
 
+  suc≰id : ∀ {n} → suc n ≤ n → ⊥
+  suc≰id (s≤s s) = suc≰id s
+
   mutual
     _◃_ : {A : Set} {f : A → V} → A → FingerTree A f → FingerTree A f
     a ◃ Dummy.empty = Dummy.single a
     a ◃ Dummy.single b = deep (one a) empty (one b)
-    _◃_ {f = f} a (Dummy.deep m (one b) t r eq) = Dummy.deep (f a ∙ m) (two a b) t r 
-           (begin 
-           f a ∙ m                                                           ≈⟨ ∙-cong refl eq ⟩
-           f a ∙ (f b ∙ measureTree t ∙ measureDigit f r)                     ≈⟨ solve 4
-                                                                                 (λ x x₁ x₂ x₃ →
-                                                                                    x ⊙ (x₁ ⊙ x₂ ⊙ x₃) ⊜ x ⊙ x₁ ⊙ x₂ ⊙ x₃)
-                                                                                 refl _ _ _ _ ⟩
-           f a ∙  f b ∙ measureTree t ∙ measureDigit f r                      ≈⟨ refl ⟩
-           measureDigit f (two a b) ∙ measureTree t ∙ measureDigit f r        ∎)
-    _◃_ {f = f} a (Dummy.deep m (two b c) t r eq) = Dummy.deep (f a ∙ m) (three a b c) t r 
+    a ◃ Dummy.deep m (digit {n} vec n-good) t r eq with compare n 3
+    _◃_ {f = f} a (Dummy.deep m (digit vec n-good) t r eq) | tri< x ¬y ¬z = Dummy.deep (f a ∙ m) (digit (a ∷ vec) (s≤s x)) t r
            (begin
-             f a ∙ m                                                           ≈⟨ ∙-cong refl eq ⟩
-             f a ∙ (f b ∙ f c ∙ measureTree t ∙ measureDigit f r)               ≈⟨ solve 5 
-                                                                                   (λ x x₁ x₂ x₃ x₄ →
-                                                                                      x ⊙ (x₁ ⊙ x₂ ⊙ x₃ ⊙ x₄) ⊜ x ⊙ x₁ ⊙ x₂ ⊙ x₃ ⊙ x₄) 
-                                                                                   refl _ _ _ _ _ ⟩
-             f a ∙  f b ∙ f c ∙ measureTree t ∙ measureDigit f r                ≈⟨ refl ⟩
-             measureDigit f (three a b c) ∙ measureTree t ∙ measureDigit f r   ∎)
-    _◃_ {f = f} a (Dummy.deep m (three b c d) t r eq) = Dummy.deep (f a ∙ m) (four a b c d) t r
-           (begin
-             f a ∙ m                                                          ≈⟨ ∙-cong refl eq ⟩
-             f a ∙ (f b ∙ f c ∙ f d ∙ measureTree t ∙ measureDigit f r)         ≈⟨ solve 6
-                                                                                   (λ x x₁ x₂ x₃ x₄ x₅ →
-                                                                                      x ⊙ (x₁ ⊙ x₂ ⊙ x₃ ⊙ x₄ ⊙ x₅) ⊜ x ⊙ x₁ ⊙ x₂ ⊙ x₃ ⊙ x₄ ⊙ x₅)
-                                                                                  refl _ _ _ _ _ _ ⟩
-             f a ∙  f b ∙ f c ∙ f d ∙ measureTree t ∙ measureDigit f r          ≈⟨ refl ⟩
-             measureDigit f (four a b c d) ∙ measureTree t ∙ measureDigit f r  ∎)
-    _◃_ {f = f} a (Dummy.deep m (four b c d e) t r eq) = Dummy.deep (f a ∙ m) (two a b) (node3 c d e ◃ t) r
-           (begin
-             f a ∙ m ≈⟨ ∙-cong refl eq ⟩
-             f a ∙ (f b ∙ f c ∙ f d ∙ f e ∙ measureTree t ∙ measureDigit f r) ≈⟨ solve 7 
-                                                                                (λ x x₁ x₂ x₃ x₄ x₅ x₆ →
-                                                                                   x ⊙ (x₁ ⊙ x₂ ⊙ x₃ ⊙ x₄ ⊙ x₅ ⊙ x₆) ⊜ x ⊙ x₁ ⊙ (x₂ ⊙ x₃ ⊙ x₄ ⊙ x₅) ⊙ x₆)
-                                                                                refl _ _ _ _ _ _ _ ⟩
-             f a ∙ f b ∙ (f c ∙ f d ∙ f e ∙ measureTree t) ∙ measureDigit f r ≈⟨ refl ⟩
-             f a ∙ f b ∙ (measureNode (node3 c d e) ∙ measureTree t) ∙ measureDigit f r ≈⟨ ∙-cong (∙-cong refl (sym (measureTree-◃ (node3 c d e) t))) refl ⟩
-             f a ∙ f b ∙ measureTree (node3 c d e ◃ t) ∙ measureDigit f r ≈⟨ refl ⟩
-             measureDigit f (two a b) ∙ measureTree (node3 c d e ◃ t) ∙ measureDigit f r ∎)
+             f a ∙ m
+           ≈⟨ ∙-cong refl eq ⟩
+             f a ∙ (foldr _ _∙_ ε (mapVec f vec) ∙ measureTree t ∙ measureDigit f r)
+           ≈⟨ solve 4 (λ a b c d → a ⊙ (b ⊙ c ⊙ d) ⊜ (a ⊙ b) ⊙ c ⊙ d) refl _ _ _ _ ⟩
+             (f a ∙ foldr _ _∙_ ε (mapVec f vec)) ∙ measureTree t ∙ measureDigit f r
+           ≈⟨ refl ⟩
+             foldr _ _∙_ ε  (mapVec f (a ∷ vec)) ∙ measureTree t ∙ measureDigit f r
+           ∎)
+    _◃_ {f = f} a (Dummy.deep m (digit (b ∷ vec) n-good) t r eq) | tri≈ ¬x PropEq.refl ¬z = Dummy.deep (f a ∙ m) (two a b) (node′ vec ◃ t) r {!!}
+    a ◃ Dummy.deep m (digit vec n-good) t r eq | tri> ¬x ¬y z = ⊥-elim (suc≰id (≤-trans n-good z))
 
     .measureTree-◃ : {A : Set} {f : A → V} (a : A) (t : FingerTree A f) → measureTree (a ◃ t) ≈ f a ∙ measureTree t
     measureTree-◃ {f = f} a Dummy.empty = sym (proj₂ identity (f a))
-    measureTree-◃ {f = f} a (Dummy.single x) = ∙-cong (proj₂ identity (f a)) refl
-    measureTree-◃ {f = f} a (Dummy.deep m (one b) t r eq) = refl
-    measureTree-◃ {f = f} a (Dummy.deep m (two b c) t r eq) = refl
-    measureTree-◃ {f = f} a (Dummy.deep m (three b c d) t r eq) = refl
-    measureTree-◃ {f = f} a (Dummy.deep m (four b c d e) t r eq) = refl
+    measureTree-◃ {f = f} a (Dummy.single x) = solve 2 (λ x₁ x₂ → x₁ ⊙ :0 ⊙ :0 ⊙ (x₂ ⊙ :0) ⊜ x₁ ⊙ x₂) refl _ _
+    measureTree-◃ a (Dummy.deep m (digit {n} vec n-good) t r eq) with compare n 3
+    measureTree-◃ a (Dummy.deep m (digit vec n-good) t r eq) | tri< x ¬y ¬z = refl
+    measureTree-◃ a (Dummy.deep m (digit (b ∷ vec) n-good) t r eq) | tri≈ ¬x PropEq.refl ¬z = refl
+    measureTree-◃ a (Dummy.deep m (digit vec n-good) t r eq) | tri> ¬x ¬y z = ⊥-elim (suc≰id (≤-trans n-good z))
 
+{-
 {-
 module MapTree (M1 M2 : Monoid Level.zero Level.zero) where
   private
@@ -186,4 +193,5 @@ module MapTree (M1 M2 : Monoid Level.zero Level.zero) where
   map h FT1.FingerTree.empty = FT2.empty
   map h (FT1.FingerTree.single x) = FT2.single (h x)
   map h (FT1.FingerTree.deep m l t r eq) = FT2.deep (mapDigit h l) (map (mapNode h) t) (mapDigit h r)
+-}
 -}
