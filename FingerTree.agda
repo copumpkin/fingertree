@@ -9,6 +9,10 @@ open import Data.Product hiding (map)
 open import Data.Nat hiding (compare)
 open import Data.Nat.Properties
 open import Data.Vec renaming (map to mapVec)
+import Data.BoundedVec as BVec
+open BVec using (BoundedVec; []v; _∷v_) renaming ([] to []′; _∷_ to _∷′_)
+import Data.List as List
+open List using (List; []; _∷_)
 
 open import Relation.Nullary
 open import Relation.Nullary.Decidable hiding (map)
@@ -28,6 +32,16 @@ open DecTotalOrder decTotalOrder using () renaming (trans to ≤-trans)
 foldMap₁ : ∀ {n} {a b} {A : Set a} {B : Set b} → (B → B → B) → (A → B) → Vec A (1 + n) → B
 foldMap₁ _∙_ f (x ∷ []) = f x
 foldMap₁ _∙_ f (x ∷ x₁ ∷ xs) = f x ∙ foldMap₁ _∙_ f (x₁ ∷ xs)
+
+fromVec↑ : ∀ {n} m {A : Set} → Vec A n → BoundedVec A (n + m)
+fromVec↑ m xs = foldr (λ q → BoundedVec _ (q + m)) _∷′_ []′ xs
+
+to∃Vec : ∀ {n} {A : Set} → BoundedVec A n → ∃ λ m → Vec A m × m ≤ n
+to∃Vec bv with BVec.view bv 
+to∃Vec bv | []v = zero , [] , z≤n
+to∃Vec bv | x ∷v xs with to∃Vec xs
+to∃Vec bv | x ∷v xs | m , ys , fits = suc m , x ∷ ys , s≤s fits
+
 
 module FoldMap₁ {b c} (S : Semigroup b c) where
   open Semigroup S renaming (Carrier to B)
@@ -164,11 +178,11 @@ module Main (M : Monoid Level.zero Level.zero) where
   suc≰id (s≤s s) = suc≰id s
 
   mutual
-    _◃_ : {A : Set} {f : A → V} → A → FingerTree A f → FingerTree A f
-    a ◃ Dummy.empty = Dummy.single a
-    a ◃ Dummy.single b = deep (one a) empty (one b)
-    a ◃ Dummy.deep m (digit {n} vec n-good) t r eq with compare n 3
-    _◃_ {f = f} a (Dummy.deep m (digit vec n-good) t r eq) | tri< x ¬y ¬z = Dummy.deep (f a ∙ m) (digit (a ∷ vec) (s≤s x)) t r
+    _◂_ : {A : Set} {f : A → V} → A → FingerTree A f → FingerTree A f
+    a ◂ Dummy.empty = Dummy.single a
+    a ◂ Dummy.single b = deep (one a) empty (one b)
+    a ◂ Dummy.deep m (digit {n} vec n-good) t r eq with compare n 3
+    _◂_ {f = f} a (Dummy.deep m (digit vec n-good) t r eq) | tri< x ¬y ¬z = Dummy.deep (f a ∙ m) (digit (a ∷ vec) (s≤s x)) t r
            (begin
              f a ∙ m
            ≈⟨ ∙-cong refl eq ⟩
@@ -178,7 +192,7 @@ module Main (M : Monoid Level.zero Level.zero) where
            ≈⟨ ∙-cong (∙-cong (foldMap₁-cons f a vec) refl) refl ⟩
              foldMap₁ _∙_ f (a ∷ vec) ∙ measureTree t ∙ measureDigit f r
            ∎)
-    _◃_ {f = f} a (Dummy.deep m (digit (b ∷ vec) n-good) t r eq) | tri≈ ¬x PropEq.refl ¬z = Dummy.deep (f a ∙ m) (two a b) (node′ vec ◃ t) r
+    _◂_ {f = f} a (Dummy.deep m (digit (b ∷ vec) n-good) t r eq) | tri≈ ¬x PropEq.refl ¬z = Dummy.deep (f a ∙ m) (two a b) (node′ vec ◂ t) r
            (begin
              f a ∙ m
            ≈⟨ ∙-cong refl eq ⟩
@@ -187,19 +201,20 @@ module Main (M : Monoid Level.zero Level.zero) where
              f a ∙ (f b ∙ foldMap₁ _∙_ f vec ∙ measureTree t ∙ measureDigit f r)
            ≈⟨ solve 5 (λ a b c d e → a ⊙ (b ⊙ c ⊙ d ⊙ e) ⊜ a ⊙ b ⊙ (c ⊙ d) ⊙ e) refl _ _ _ _ _ ⟩
              f a ∙ f b ∙ (foldMap₁ _∙_ f vec ∙ measureTree t) ∙ measureDigit f r
-           ≈⟨ ∙-cong (∙-cong refl (sym (measureTree-◃ (node′ vec) t))) refl ⟩
-             f a ∙ f b ∙ measureTree (node′ vec ◃ t) ∙ measureDigit f r
+           ≈⟨ ∙-cong (∙-cong refl (sym (measureTree-◂ (node′ vec) t))) refl ⟩
+             f a ∙ f b ∙ measureTree (node′ vec ◂ t) ∙ measureDigit f r
            ∎)
-    a ◃ Dummy.deep m (digit vec n-good) t r eq | tri> ¬x ¬y z = ⊥-elim (suc≰id (≤-trans n-good z))
+    a ◂ Dummy.deep m (digit vec n-good) t r eq | tri> ¬x ¬y z = ⊥-elim (suc≰id (≤-trans n-good z))
 
-    .measureTree-◃ : {A : Set} {f : A → V} (a : A) (t : FingerTree A f) → measureTree (a ◃ t) ≈ f a ∙ measureTree t
-    measureTree-◃ a Dummy.empty = sym (proj₂ identity _)
-    measureTree-◃ a (Dummy.single x) = ∙-cong (proj₂ identity _) refl
-    measureTree-◃ a (Dummy.deep m (digit {n} vec n-good) t r eq) with compare n 3
-    measureTree-◃ a (Dummy.deep m (digit vec n-good) t r eq) | tri< x ¬y ¬z = refl
-    measureTree-◃ a (Dummy.deep m (digit (b ∷ vec) n-good) t r eq) | tri≈ ¬x PropEq.refl ¬z = refl
-    measureTree-◃ a (Dummy.deep m (digit vec n-good) t r eq) | tri> ¬x ¬y z = ⊥-elim (suc≰id (≤-trans n-good z))
+    .measureTree-◂ : {A : Set} {f : A → V} (a : A) (t : FingerTree A f) → measureTree (a ◂ t) ≈ f a ∙ measureTree t
+    measureTree-◂ a Dummy.empty = sym (proj₂ identity _)
+    measureTree-◂ a (Dummy.single x) = ∙-cong (proj₂ identity _) refl
+    measureTree-◂ a (Dummy.deep m (digit {n} vec n-good) t r eq) with compare n 3
+    measureTree-◂ a (Dummy.deep m (digit vec n-good) t r eq) | tri< x ¬y ¬z = refl
+    measureTree-◂ a (Dummy.deep m (digit (b ∷ vec) n-good) t r eq) | tri≈ ¬x PropEq.refl ¬z = refl
+    measureTree-◂ a (Dummy.deep m (digit vec n-good) t r eq) | tri> ¬x ¬y z = ⊥-elim (suc≰id (≤-trans n-good z))
 
+  -- If I were really clever, I could probably unify this with the proof above. But It might be more complication than it's worth...
   mutual
     _▹_ : {A : Set} {f : A → V} → FingerTree A f → A → FingerTree A f
     Dummy.empty ▹ a = Dummy.single a
@@ -238,6 +253,57 @@ module Main (M : Monoid Level.zero Level.zero) where
     measureTree-▹ (Dummy.deep m l t (digit vec n-good) eq) a | tri≈ ¬x PropEq.refl ¬z with initLast vec
     measureTree-▹ (Dummy.deep m l t (digit .(ys ∷ʳ y) n-good) eq) a | tri≈ ¬x PropEq.refl ¬z | ys , y , PropEq.refl = refl
     measureTree-▹ (Dummy.deep m l t (digit vec n-good) eq) a | tri> ¬x ¬y z = ⊥-elim (suc≰id (≤-trans n-good z))
+
+  ~div3 : ℕ → ℕ
+  ~div3 0 = 0
+  ~div3 1 = 0
+  ~div3 2 = 1
+  ~div3 3 = 1
+  ~div3 4 = 2
+  ~div3 (suc (suc (suc (suc (suc n))))) = suc (~div3 (suc (suc n)))
+
+  splitNodes : ∀ {n} {A : Set} {f : A → V} → Vec A (2 + n) → Vec (Node A f) (~div3 (2 + n))
+  splitNodes {0} (x ∷ x₁ ∷ _) = node2 x x₁ ∷ []
+  splitNodes {1} (x ∷ x₁ ∷ x₂ ∷ _) = node3 x x₁ x₂ ∷ []
+  splitNodes {2} (x ∷ x₁ ∷ x₂ ∷ x₃ ∷ _) = node2 x x₁ ∷ node2 x₂ x₃ ∷ []
+  splitNodes {suc (suc (suc n))} (x ∷ x₁ ∷ x₂ ∷ xs) = node3 x x₁ x₂ ∷ splitNodes xs
+
+  mutual
+    appendTree : {A : Set} {f : A → V} → FingerTree A f → BoundedVec A 4 → FingerTree A f → FingerTree A f
+    appendTree Dummy.empty ys z = List.foldr _◂_ z (BVec.toList ys)
+    appendTree x ys Dummy.empty = List.foldl _▹_ x (BVec.toList ys)
+    appendTree (Dummy.single x) ys z = x ◂ List.foldr _◂_ z (BVec.toList ys)
+    appendTree x ys (Dummy.single z) = List.foldl _▹_ x (BVec.toList ys) ▹ z
+    appendTree (Dummy.deep m l x r eq) ys (Dummy.deep m′ l′ x′ r′ eq′) = deep l (addDigits x r ys l′ x′) r′
+
+    addDigits : {A : Set} {f : A → V} → FingerTree (Node A f) measureNode → Digit A 
+                                      → BoundedVec A 4 
+                                      → Digit A → FingerTree (Node A f) measureNode
+                                      → FingerTree (Node A f) measureNode
+    addDigits x (digit vec n-good) ys (digit vec′ n-good′) z with to∃Vec ys
+    addDigits {A} {f} x (digit {n} vec n-good) ys (digit {n′} vec′ n-good′) z | m , ys₁ , fits = appendTree x bounded z
+      where
+      joined : Vec A (2 + n + m + n′)
+      joined = {!!} -- vec ++ ys₁ ++ vec′
+
+      coalesced : Vec (Node A f) (~div3 (2 + n + m + n′))
+      coalesced = splitNodes joined
+
+      rest : ℕ
+      rest = 4 ∸ ~div3 (2 + n + m + n′)
+
+      proof : ~div3 (2 + n + m + n′) + rest ≡ 4
+      proof = m+n∸m≡n {~div3 (2 + n + m + n′)} {!!}
+
+      bounded : BoundedVec (Node A f) 4
+      bounded = PropEq.subst (BoundedVec _) proof (fromVec↑ rest coalesced)
+
+-- appendTree x (splitNodes {10} {!!}) z
+
+  _▹◂_ : {A : Set} {f : A → V} → FingerTree A f → FingerTree A f → FingerTree A f
+  x ▹◂ y = appendTree x []′ y
+
+
 
 {-
 {-
