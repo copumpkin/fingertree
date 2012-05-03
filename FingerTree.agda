@@ -9,10 +9,6 @@ open import Data.Product hiding (map)
 open import Data.Nat hiding (compare)
 open import Data.Nat.Properties
 open import Data.Vec renaming (map to mapVec)
-import Data.BoundedVec as BVec
-open BVec using (BoundedVec; []v; _∷v_) renaming ([] to []′; _∷_ to _∷′_)
-import Data.List as List
-open List using (List; []; _∷_)
 
 open import Relation.Nullary
 open import Relation.Nullary.Decidable hiding (map)
@@ -29,19 +25,10 @@ open DecTotalOrder decTotalOrder using () renaming (trans to ≤-trans)
 
 -- TODO: avoid full monoids and just use semigroups where possible
 
+
 foldMap₁ : ∀ {n} {a b} {A : Set a} {B : Set b} → (B → B → B) → (A → B) → Vec A (1 + n) → B
 foldMap₁ _∙_ f (x ∷ []) = f x
 foldMap₁ _∙_ f (x ∷ x₁ ∷ xs) = f x ∙ foldMap₁ _∙_ f (x₁ ∷ xs)
-
-fromVec↑ : ∀ {n} m {A : Set} → Vec A n → BoundedVec A (n + m)
-fromVec↑ m xs = foldr (λ q → BoundedVec _ (q + m)) _∷′_ []′ xs
-
-to∃Vec : ∀ {n} {A : Set} → BoundedVec A n → ∃ λ m → Vec A m × m ≤ n
-to∃Vec bv with BVec.view bv 
-to∃Vec bv | []v = zero , [] , z≤n
-to∃Vec bv | x ∷v xs with to∃Vec xs
-to∃Vec bv | x ∷v xs | m , ys , fits = suc m , x ∷ ys , s≤s fits
-
 
 module FoldMap₁ {b c} (S : Semigroup b c) where
   open Semigroup S renaming (Carrier to B)
@@ -254,54 +241,60 @@ module Main (M : Monoid Level.zero Level.zero) where
     measureTree-▹ (Dummy.deep m l t (digit .(ys ∷ʳ y) n-good) eq) a | tri≈ ¬x PropEq.refl ¬z | ys , y , PropEq.refl = refl
     measureTree-▹ (Dummy.deep m l t (digit vec n-good) eq) a | tri> ¬x ¬y z = ⊥-elim (suc≰id (≤-trans n-good z))
 
+  -- This craziness is probably way more work than is needed considering we only ever go up to 12, but it feels 
+  -- icky to write out all the cases manually :(
   ~div3 : ℕ → ℕ
-  ~div3 0 = 0
-  ~div3 1 = 0
-  ~div3 2 = 1
-  ~div3 3 = 1
-  ~div3 4 = 2
-  ~div3 (suc (suc (suc (suc (suc n))))) = suc (~div3 (suc (suc n)))
+  ~div3 0 = 1
+  ~div3 1 = 1
+  ~div3 2 = 2
+  ~div3 (suc (suc (suc n))) = suc (~div3 n)
 
-  splitNodes : ∀ {n} {A : Set} {f : A → V} → Vec A (2 + n) → Vec (Node A f) (~div3 (2 + n))
+  ~div3≥1 : ∀ n → ~div3 n ≥ 1
+  ~div3≥1 zero = s≤s z≤n
+  ~div3≥1 (suc zero) = s≤s z≤n
+  ~div3≥1 (suc (suc zero)) = s≤s z≤n
+  ~div3≥1 (suc (suc (suc n))) = s≤s z≤n
+
+  ~div3-monotonic : _≤_ =[ ~div3 ]⇒ _≤_
+  ~div3-monotonic {j = j} z≤n = ~div3≥1 j
+  ~div3-monotonic (s≤s {n = n} z≤n) = ~div3≥1 (suc n)
+  ~div3-monotonic (s≤s (s≤s {n = zero} z≤n)) = s≤s (s≤s z≤n)
+  ~div3-monotonic (s≤s (s≤s {n = suc n} z≤n)) = s≤s (~div3≥1 n)
+  ~div3-monotonic (s≤s (s≤s (s≤s i≤j))) = s≤s (~div3-monotonic i≤j)
+
+  splitNodes : ∀ {n} {A : Set} {f : A → V} → Vec A (2 + n) → Vec (Node A f) (~div3 n)
   splitNodes {0} (x ∷ x₁ ∷ _) = node2 x x₁ ∷ []
   splitNodes {1} (x ∷ x₁ ∷ x₂ ∷ _) = node3 x x₁ x₂ ∷ []
   splitNodes {2} (x ∷ x₁ ∷ x₂ ∷ x₃ ∷ _) = node2 x x₁ ∷ node2 x₂ x₃ ∷ []
   splitNodes {suc (suc (suc n))} (x ∷ x₁ ∷ x₂ ∷ xs) = node3 x x₁ x₂ ∷ splitNodes xs
 
+  append3 : ∀ {x y z} {A : Set} → Vec A (suc x) → Vec A y → Vec A (suc z) → Vec A (2 + x + y + z)
+  append3 {x} {y} {z} xs ys zs = PropEq.subst (Vec _) 
+                                   (S.solve 3 (λ a b c → (con 1 :+ a) :+ (b :+ (con 1 :+ c)) := con 2 :+ a :+ b :+ c) PropEq.refl x y z)
+                                   {!xs ++ ys ++ zs!}
+    where
+    module S = SemiringSolver
+    open S
+
   mutual
-    appendTree : {A : Set} {f : A → V} → FingerTree A f → BoundedVec A 4 → FingerTree A f → FingerTree A f
-    appendTree Dummy.empty ys z = List.foldr _◂_ z (BVec.toList ys)
-    appendTree x ys Dummy.empty = List.foldl _▹_ x (BVec.toList ys)
-    appendTree (Dummy.single x) ys z = x ◂ List.foldr _◂_ z (BVec.toList ys)
-    appendTree x ys (Dummy.single z) = List.foldl _▹_ x (BVec.toList ys) ▹ z
-    appendTree (Dummy.deep m l x r eq) ys (Dummy.deep m′ l′ x′ r′ eq′) = deep l (addDigits x r ys l′ x′) r′
+    appendTree : ∀ {n} {A : Set} {f : A → V} → n ≤ 4 → FingerTree A f → Vec A n → FingerTree A f → FingerTree A f
+    appendTree pf Dummy.empty ys z = foldr _ _◂_ z ys
+    appendTree pf x ys Dummy.empty = foldl _ _▹_ x ys
+    appendTree pf (Dummy.single x) ys z = x ◂ foldr _ _◂_ z ys
+    appendTree pf x ys (Dummy.single z) = foldl _ _▹_ x ys ▹ z
+    appendTree pf (Dummy.deep m l x r eq) ys (Dummy.deep m′ l′ x′ r′ eq′) = deep l (addDigits pf x r ys l′ x′) r′
 
-    addDigits : {A : Set} {f : A → V} → FingerTree (Node A f) measureNode → Digit A 
-                                      → BoundedVec A 4 
-                                      → Digit A → FingerTree (Node A f) measureNode
-                                      → FingerTree (Node A f) measureNode
-    addDigits x (digit vec n-good) ys (digit vec′ n-good′) z with to∃Vec ys
-    addDigits {A} {f} x (digit {n} vec n-good) ys (digit {n′} vec′ n-good′) z | m , ys₁ , fits = appendTree x bounded z
-      where
-      joined : Vec A (2 + n + m + n′)
-      joined = {!!} -- vec ++ ys₁ ++ vec′
-
-      coalesced : Vec (Node A f) (~div3 (2 + n + m + n′))
-      coalesced = splitNodes joined
-
-      rest : ℕ
-      rest = 4 ∸ ~div3 (2 + n + m + n′)
-
-      proof : ~div3 (2 + n + m + n′) + rest ≡ 4
-      proof = m+n∸m≡n {~div3 (2 + n + m + n′)} {!!}
-
-      bounded : BoundedVec (Node A f) 4
-      bounded = PropEq.subst (BoundedVec _) proof (fromVec↑ rest coalesced)
-
--- appendTree x (splitNodes {10} {!!}) z
+    addDigits : ∀ {n} {A : Set} {f : A → V} 
+              → n ≤ 4
+              → FingerTree (Node A f) measureNode → Digit A 
+              → Vec A n
+              → Digit A → FingerTree (Node A f) measureNode
+              → FingerTree (Node A f) measureNode
+    addDigits {n} pf x (digit vec (s≤s {n₁} n-good)) ys (digit {n₂} vec′ (s≤s n-good′)) z
+      = appendTree (~div3-monotonic {n₁ + n + n₂} {10} ((n-good +-mono pf) +-mono n-good′)) x (splitNodes (append3 vec ys vec′)) z
 
   _▹◂_ : {A : Set} {f : A → V} → FingerTree A f → FingerTree A f → FingerTree A f
-  x ▹◂ y = appendTree x []′ y
+  x ▹◂ y = appendTree z≤n x [] y
 
 
 
